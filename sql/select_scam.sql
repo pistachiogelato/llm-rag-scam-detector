@@ -1,0 +1,1 @@
+SELECT * FROM scams WHERE scam_type = 'phishing';
