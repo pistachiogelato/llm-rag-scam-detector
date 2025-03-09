@@ -1,10 +1,12 @@
 from sentence_transformers import SentenceTransformer
+from huggingface_hub import InferenceClient
 import numpy as np
 import faiss
 import os
 import requests
 import logging
-
+from dotenv import load_dotenv
+load_dotenv()
 
 # Initialize the embedding model
 encoder = SentenceTransformer('paraphrase-multilingual-mpnet-base-v2')
@@ -55,25 +57,37 @@ def llm_predict(prompt: str) -> str:
     Call the LLM API to generate a response based on the prompt.
     Returns the generated text.
     """
-    api_url = os.getenv("DEEPEEK_API_URL")
-    api_key = os.getenv("DEEPEEK_API_KEY")
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-    payload = {"prompt": prompt, "max_tokens": 150}
+    #api_url = os.getenv("API_URL")
+    api_token = os.getenv("API_TOKEN")
+    if not api_token:
+        raise Exception("API_TOKEN is not set in environment variables.")
     try:
-        response = requests.post(api_url, headers=headers, json=payload)
-        if response.status_code == 200:
-            result = response.json()
-            return result.get("generated_text", "")
-        else:
-            logging.error("LLM API error: %s", response.text)
-            raise Exception("LLM API call failed")
+        # Initialize the InferenceClient; note that the model is specified in the client call
+        client = InferenceClient(
+            provider="sambanova",  # 根据需要可以修改provider
+            api_key=api_token
+        )
+        
+        # Prepare messages for chat interface; adjust format if necessary
+        messages = [
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
+        
+        # Call the chat completions API; the model id is specified here
+        completion = client.chat.completions.create(
+            model="deepseek-ai/DeepSeek-R1",
+            messages=messages,
+            max_tokens=150
+        )
+        
+        # Return the generated message content
+        return completion.choices[0].message.content
     except Exception as e:
         logging.error("Exception in llm_predict: %s", e)
         raise e
-
 
 
 def generate_report(user_text: str, retrieved_cases: list) -> str:
