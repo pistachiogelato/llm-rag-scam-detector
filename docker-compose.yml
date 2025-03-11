@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_NAME=scam_detector
+      - DB_USER=postgres
+      - DB_PASSWORD=070827
+      - DB_HOST=db
+      - DB_PORT=5432
+    depends_on:
+      - db
+    volumes:
+      - ./data:/app/data
+    networks:
+      - scam-detector-network
+
+  db:
+    image: postgres:15
+    environment:
+      - POSTGRES_DB=scam_detector
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=070827
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - scam-detector-network
+
+volumes:
+  postgres_data:
+
+networks:
+  scam-detector-network:
+    driver: bridge 
