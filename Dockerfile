@@ -1,38 +1,28 @@
-# Use an official Python runtime as a parent image
-FROM python:3.12-slim
+FROM python:3.11-slim
 
-# Create working directory
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    curl \
-    software-properties-common \
-    git \
-    && rm -rf /var/lib/apt/lists/*
+# 创建新的源列表文件
+RUN echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian/ bookworm main contrib non-free" > /etc/apt/sources.list
 
-# Copy the rest of the application code
-COPY . /app/
 
-# Create necessary directory
-RUN mkdir -p /app/data
+# 安装系统依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential \
+      git \
+      cmake \
+      libopenblas-dev && \
+    rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# 复制项目文件
+COPY requirements.txt .
+COPY . .
 
-# set environment avariable
-ENV DB_NAME=scam_detector \
-    DB_USER=postgres \
-    DB_PASSWORD=070827 \
-    DB_HOST=localhost \
-    DB_PORT=5432 \
-    PYTHONPATH=/app
+# 设置 pip 镜像并安装依赖
+RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
+    pip config set install.trusted-host mirrors.aliyun.com && \
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir torch==2.0.1+cpu -f https://download.pytorch.org/whl/torch_stable.html
 
-# expose the port the app runs on
 EXPOSE 8000
-
-# Command to run the application (using uvicorn)
 CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
-
-

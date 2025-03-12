@@ -11,12 +11,16 @@ from datetime import datetime, timedelta
 from typing import List
 from contextlib import asynccontextmanager
 
+
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 import faiss
 import chardet
+import asyncio
+from langdetect import detect
 
 # Import RAG functions from our custom module
 from rag.rag_system import detect_and_generate_report, encode_text, build_faiss_index
@@ -228,23 +232,104 @@ def update_faiss_index():
     logging.info(f"FAISS index updated with {len(new_texts)} entries.")
     #logging.info(f"FAISS index updated with {faiss_index.ntotal} entries.")
 
-# Uncomment and modify the following scheduled tasks as needed
-'''
-def daily_tasks():
-    """
-    Execute daily data refresh and index update.
-    """
-    seed_urlhaus_data()
-    seed_sms_scams()
-    update_faiss_index()
-'''
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # On startup, update FAISS index (and optionally seed SMS data)
-    seed_sms_scams()
-    update_faiss_index()
-    yield
+    """
+    优化的应用生命周期管理
+    """
+    global scam_texts, faiss_index
+    try:
+        # 1. 快速启动必要服务
+        logging.info("Starting application...")
+        
+        # 2. 异步初始化数据库
+        async def init_db():
+            conn = await asyncio.to_thread(get_db_connection)
+            cur = conn.cursor()
+            await asyncio.to_thread(
+                cur.execute,
+                """
+                CREATE TABLE IF NOT EXISTS realtime_scams (
+                    id SERIAL PRIMARY KEY,
+                    source VARCHAR(255),
+                    scam_text TEXT UNIQUE,
+                    scam_type VARCHAR(255),
+                    confidence FLOAT,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            await asyncio.to_thread(conn.commit)
+            cur.close()
+            conn.close()
+        
+        # 3. 异步加载初始数据
+        async def init_data():
+            global scam_texts, faiss_index
+            # 只加载最近7天数据用于快速启动
+            initial_texts = await asyncio.to_thread(
+                load_scam_texts_from_db, 
+                batch_size=1000, 
+                days=7
+            )
+            if initial_texts:
+                embeddings = await asyncio.to_thread(
+                    encoder.encode,
+                    initial_texts,
+                    convert_to_numpy=True
+                )
+                faiss_index = faiss.IndexHNSWFlat(embeddings.shape[1], 32)
+                faiss_index.add(embeddings)
+                scam_texts = initial_texts
+                logging.info(f"Initial index built with {len(initial_texts)} entries")
+        
+        # 4. 创建后台任务
+        background_tasks = [
+            asyncio.create_task(init_db()),
+            asyncio.create_task(init_data())
+        ]
+        
+        # 5. 等待基本服务启动
+        await asyncio.gather(*background_tasks)
+        
+        # 6. 启动完整数据加载
+        asyncio.create_task(load_complete_data())
+        
+        logging.info("Application startup complete")
+        yield
+        
+    except Exception as e:
+        logging.error(f"Startup error: {e}")
+        yield
+    finally:
+        logging.info("Shutting down...")
+
+async def async_load_initial_data():
+    """
+    Asynchronously load initial data after API starts
+    """
+    try:
+        # 先加载一小部分数据用于快速启动
+        await asyncio.to_thread(load_scam_texts_from_db, days=7)  # 只加载最近7天数据
+        update_faiss_index()
+        
+        # 后台加载完整数据
+        asyncio.create_task(load_complete_data())
+    except Exception as e:
+        logging.error(f"Error in initial data loading: {e}")
+
+async def load_complete_data():
+    """
+    Load complete dataset in background
+    """
+    try:
+        await asyncio.sleep(5)  # 等待服务完全启动
+        await asyncio.to_thread(seed_sms_scams)
+        await asyncio.to_thread(seed_urlhaus_data)
+        await asyncio.to_thread(update_faiss_index)
+        logging.info("Complete data loading finished")
+    except Exception as e:
+        logging.error(f"Error in complete data loading: {e}")
 
 # Create FastAPI app with lifespan management
 app = FastAPI(
@@ -253,6 +338,16 @@ app = FastAPI(
     version="1.0",
     lifespan=lifespan
 )
+
+#Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["chrome-extension://*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 # API endpoints
 @app.get("/", summary="Service status check")
@@ -297,38 +392,45 @@ def debug_index():
 @app.post("/detect", summary="Detect potential scams in text")
 def detect_scam(query: QueryRequest):
     """
-    Detect potential scams in the input text using rule-based and FAISS-based RAG methods.
+    增强的诈骗检测端点
     """
-    global scam_texts, faiss_index
     text = query.text.lower()
-    print(f"Received text: {text}")
-    if not text:
-        return {"error": "Empty text received."}
-    # Rule-based detection: simple keyword-based scoring
-    keyword_weights = {
-        "account": 0.3, "verify": 0.3, "lottery": 0.3,
-        "immediately": 0.2, "urgent": 0.2, "now": 0.1
-    }
-    rule_confidence = sum(weight for keyword, weight in keyword_weights.items() if keyword in text)
-    rule_confidence = min(rule_confidence, 1.0)
-
-    # FAISS-based retrieval and RAG detection
     try:
+        # 检测文本语言
+        lang = detect(text)
+        logging.info(f"Input text: {text}")
+        logging.info(f"Detected language: {lang}")
+        
+        # 检查数据准备情况
+        logging.info(f"FAISS index size: {faiss_index.ntotal if faiss_index else 0}")
+        logging.info(f"Scam texts count: {len(scam_texts) if scam_texts else 0}")
+        
+        if not scam_texts or not faiss_index:
+            raise HTTPException(
+                status_code=503,
+                detail="Service not ready. Please try again later."
+            )
+        
+        if not text:
+            raise HTTPException(
+                status_code=400,
+                detail="Empty text received."
+            )
+        
+        # 获取RAG检测结果
         rag_result = detect_and_generate_report(text, scam_texts, faiss_index)
+        
+        # 记录检测结果
+        logging.info(f"Detection result: {rag_result}")
+        
+        return rag_result
+        
     except Exception as e:
-        logging.error("RAG detection failed", exc_info=True)
-        raise HTTPException(status_code=500, detail="Error processing RAG detection.")
-
-    # Combine rule-based and RAG confidence scores
-    final_confidence = max(rule_confidence, rag_result.get("confidence", 0))
-    return {
-        "scam_detected": rag_result.get("scam_detected"),
-        "scam_type": rag_result.get("scam_type"),
-        "confidence": final_confidence,
-        "report": rag_result.get("report"),
-        "retrieved_cases": rag_result.get("retrieved_cases"),
-        "rule_based_confidence": rule_confidence
-    }
+        logging.error(f"Error in detect_scam: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing request: {str(e)}"
+        )
 
 @app.post("/update_index", summary="Manually update FAISS index")
 def update_index():
@@ -369,8 +471,54 @@ def shutdown(signum, frame):
         faiss_index.reset()
     os._exit(0)
 
+@app.get("/health")
+async def health_check():
+    """
+    服务健康检查
+    """
+    return {
+        "status": "healthy",
+        "index_size": faiss_index.ntotal if faiss_index else 0,
+        "scam_texts_count": len(scam_texts) if scam_texts else 0,
+        "encoder_ready": encoder is not None
+    }
+
 if __name__ == "__main__":
+    def check_index():
+        """
+        Verify required database indexes exist
+        """
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT indexname 
+                FROM pg_indexes 
+                WHERE tablename = 'realtime_scams' 
+                AND indexname = 'idx_scam_text_unique'
+            """)
+            if not cur.fetchone():
+                logging.critical("Missing unique index idx_scam_text_unique!")
+                raise RuntimeError("Database indexes not properly configured")
+        finally:
+            cur.close()
+            conn.close()
+    
+    # 执行索引检查
     check_index()
+    
+    def shutdown(signum, frame):
+        """
+        Graceful shutdown handler
+        """
+        logging.info("Received shutdown signal, cleaning up...")
+        if faiss_index:
+            faiss_index.reset()
+        os._exit(0)
+    
+    # 设置信号处理
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
+    
+    # 启动应用
     uvicorn.run(app, host="127.0.0.1", port=8000)

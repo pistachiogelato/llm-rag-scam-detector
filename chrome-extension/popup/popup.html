@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <h2>Scam Detector</h2>
+    <button id="scanPage">Scan Page</button>
+    <div id="results" class="results hidden">
+      <div class="status">
+        <span id="statusIcon"></span>
+        <span id="statusText"></span>
+      </div>
+      <div id="detailsContainer" class="details">
+        <h3>Detection Results:</h3>
+        <div id="scamReport"></div>
+        <div id="confidence"></div>
+      </div>
+    </div>
+    <div id="loading" class="loading hidden">
+      Scanning page...
+    </div>
+    <div class="settings">
+      <button id="settingsBtn">⚙️</button>
+      <div id="settingsPanel" class="hidden">
+        <label>
+          API URL:
+          <input type="text" id="apiUrl" value="http://localhost:8000">
+        </label>
+        <label>
+          Highlight Color:
+          <input type="color" id="highlightColor" value="#ffeb3b">
+        </label>
+      </div>
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html> 
