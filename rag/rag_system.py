@@ -7,6 +7,8 @@ import logging
 import faiss
 from dotenv import load_dotenv
 from typing import List
+import re 
+from collections import defaultdict
 
 load_dotenv()
 
@@ -146,102 +148,143 @@ def detect_and_generate_report(user_text: str, scam_texts: list, faiss_index: fa
     try:
         print(f"Processing text: {user_text}")
         print(f"Available scam texts: {len(scam_texts)}")
+        
+         # 1. 改进关键词权重系统
+        keyword_patterns = {
+        # 金额相关模式（保持原有）
+        "money_request": {
+            "patterns": [
+                (r"send.*?\$?\d+", 0.7),
+                (r"send.*?money", 0.7),
+                (r"need.*?\$?\d+", 0.6),
+                (r"给我.*?钱", 0.7),
+                (r"转账.*?\d+", 0.7)
+            ],
+            "category": "financial"
+        },
+    
+        # 紧急程度相关（保持原有）
+        "urgency": {
+            "patterns": [
+                (r"urgent|immediately|asap", 0.5),
+                (r"紧急|立即|马上", 0.5)
+            ],
+            "category": "urgent"
+        },
 
-        # 获取相似案例
+        # 新增通用诈骗关键词分类
+        "general_fraud": {
+            "patterns": [
+                # 英文关键词（动态生成模式）
+                *[(rf"\b{kw}\b", weight) for kw, weight in {
+                    "account": 0.3, "verify": 0.4, "bank": 0.3,
+                    "urgent": 0.5, "immediately": 0.4, "password": 0.5,
+                    "login": 0.4, "money": 0.3, "payment": 0.3,
+                    "verification": 0.4, "security": 0.3, "secure": 0.3,
+                    "update": 0.3, "confirm": 0.3, "important": 0.4,
+                    "limited time": 0.4, "expires": 0.4, "suspended": 0.4,
+                    "blocked": 0.4, "click": 0.3, "link": 0.3
+                }.items()],
+                
+                # 中文关键词（直接匹配）
+                (r"账户", 0.3), (r"验证", 0.3), (r"银行", 0.3),
+                (r"紧急", 0.4), (r"立即", 0.4), (r"密码", 0.5),
+                (r"登录", 0.4), (r"钱", 0.3), (r"支付", 0.3)
+            ],
+            "category": "suspicious_keywords"
+        }
+    }
+
+        
+        # 2. 改进文本处理
+        text_lower = user_text.lower()
+        matched_patterns = []
+        pattern_score = 0.0
+        category_scores = defaultdict(float)  # 使用分类最高分
+
+        # 3. 计算关键词匹配得分
+        for category, data in keyword_patterns.items():
+            max_category_score = 0.0
+            for pattern, weight in data["patterns"]:
+                if re.search(pattern, text_lower):
+                    max_category_score = max(max_category_score, weight)
+            category_scores[data["category"]] = max_category_score
+
+        pattern_score = sum(category_scores.values())  # 每个分类只取最高分
+        
+        # 4. 获取相似案例
         retrieved_cases = retrieve_similar(user_text, faiss_index, scam_texts)
         
-        # 关键词检测
-        keyword_weights = {
-            # 英文关键词
-            "account": 0.3, "verify": 0.3, "bank": 0.3,
-            "urgent": 0.4, "immediately": 0.4,
-            # 中文关键词
-            "账户": 0.3, "验证": 0.3, "银行": 0.3,
-            "紧急": 0.4, "立即": 0.4,
-            # 通用诈骗词
-            "password": 0.5, "密码": 0.5,
-            "login": 0.4, "登录": 0.4,
-            "money": 0.3, "钱": 0.3,
-            "payment": 0.3, "支付": 0.3,
-            # 添加更多关键词
-            "verify": 0.4, "verification": 0.4,
-            "security": 0.3, "secure": 0.3,
-            "update": 0.3, "confirm": 0.3,
-            "urgent": 0.5, "important": 0.4,
-            "limited time": 0.4, "expires": 0.4,
-            "suspended": 0.4, "blocked": 0.4,
-            "click": 0.3, "link": 0.3
-        }
-        
-        # 计算关键词匹配得分
-        keyword_score = 0.0
-        text_lower = user_text.lower()
-        matched_keywords = []
-        
-        for keyword, weight in keyword_weights.items():
-            if keyword in text_lower:
-                keyword_score += weight
-                matched_keywords.append(keyword)
-        
-        keyword_score = min(float(keyword_score), 1.0)
-        
-        # 即使没有相似案例，也要考虑关键词得分
-        if keyword_score > 0.3:  # 降低关键词触发阈值
-            scam_confidence = keyword_score
-            scam_detected = True
-        elif retrieved_cases:
-            # 如果有相似案例，计算综合置信度
-            query_vec = encode_text(user_text).reshape(1, -1)
-            distances, _ = faiss_index.search(query_vec, k=1)
-            similarity_confidence = float(1.0 / (1.0 + np.mean(distances)))
-            scam_confidence = float((similarity_confidence + keyword_score) / 2)
-            scam_detected = True
+        # 5. 使用 LLM 进行深度分析
+        if pattern_score > 0.3 or retrieved_cases:  # 只在有可疑情况时调用 LLM
+            try:
+                llm_prompt = f"""Analyze if this message is a potential scam:
+                Message: {user_text}
+                
+                Consider:
+                1. Does it request money or financial information?
+                2. Is there urgency or pressure?
+                3. Does it mix different languages suspiciously?
+                4. Are there any red flags typical of scams?
+                
+                Similar cases found: {retrieved_cases[:2] if retrieved_cases else 'None'}
+                
+                Provide a brief analysis and confidence score (0-1).
+                """
+                
+                llm_analysis = llm_predict(llm_prompt)
+                
+                # 解析 LLM 的置信度（假设 LLM 会在回复中包含数字置信度）
+                
+                confidence_match = re.search(r'confidence[:\s]+([0-9.]+)', llm_analysis.lower())
+                llm_confidence = float(confidence_match.group(1)) if confidence_match else 0.5
+                
+                # 综合评分 置信度归一化处理
+                final_confidence = min(max(pattern_score * 0.4 + llm_confidence * 0.6, 0.0), 1.0)
+            except Exception as e:
+                logging.error(f"LLM analysis failed: {e}")
+                final_confidence = pattern_score
+                llm_analysis = "LLM analysis unavailable."
         else:
-            scam_confidence = 0.1
-            scam_detected = False
+            final_confidence = pattern_score
+            llm_analysis = "No significant risk indicators found."
+        
+        # 6. 生成最终报告
+        risk_level = "High Risk" if final_confidence > 0.7 else "Medium Risk" if final_confidence > 0.4 else "Low Risk"
+        
+        # 特征描述生成
+        bullet_points = []
+        if category_scores.get("financial"):
+            bullet_points.append("💰 Detected financial request patterns")
+        if category_scores.get("urgent"):
+            bullet_points.append("⏰ Contains urgent time pressure")
+        if len(matched_patterns) > 3:
+            bullet_points.append(f"🔍 Found {len(matched_patterns)} suspicious keywords")
 
-        # 确定诈骗类型
-        scam_types = {
-            "phishing": ["account", "login", "verify", "bank", "password", "security"],
-            "financial": ["money", "payment", "credit", "transfer", "fund"],
-            "urgent": ["immediately", "urgent", "quick", "limited time", "expires"],
-            "identity_theft": ["identity", "personal", "ssn", "social security"],
-            "tech_support": ["computer", "virus", "support", "microsoft", "apple"]
-        }
-        
-        # 计算每种诈骗类型的匹配度
-        type_scores = {}
-        for scam_type, keywords in scam_types.items():
-            score = sum(1 for keyword in keywords if keyword in text_lower)
-            type_scores[scam_type] = score
-        
-        detected_type = max(type_scores.items(), key=lambda x: x[1])[0] if type_scores else "unknown"
-        
-        # 生成详细报告
-        report = f"Analysis:\n"
-        if matched_keywords:
-            report += f"Suspicious keywords found: {', '.join(matched_keywords)}\n"
-        if retrieved_cases:
-            report += f"Similar scam patterns detected.\n"
-        report += f"Scam confidence: {scam_confidence:.2f}\n"
-        report += f"Detected scam type: {detected_type}\n"
-        
-        if scam_detected:
-            report += "\nWarning: This message shows characteristics of a potential scam.\n"
-            report += "Recommendations:\n"
-            report += "- Do not click on any links\n"
-            report += "- Do not provide personal information\n"
-            report += "- Contact the supposed sender through official channels\n"
-        else:
-            report += "\nNo immediate scam indicators found, but always remain cautious.\n"
-        
+        # 专业英文报告模板
+        report = f"""
+            [Fraud Detection Report]
+            Risk Level: {risk_level} (Confidence: {final_confidence*100:.1f}%)
+
+            Key Indicators:
+            {'\n'.join(bullet_points) if bullet_points else 'No strong indicators found'}
+
+            Recommendations:
+            1. Do NOT transfer money or share sensitive information
+            2. Verify the requester's identity through official channels
+            3. Report suspicious requests to platform administrators
+                    """
+
         return {
-            "scam_detected": scam_detected,
-            "scam_type": detected_type,
-            "confidence": round(scam_confidence, 2),
-        "report": report,
-            "retrieved_cases": retrieved_cases,
-            "matched_keywords": matched_keywords  # 添加匹配的关键词信息
+            "scam_detected": final_confidence > 0.5,
+            "scam_type": next(iter(category_scores), "unknown"),
+            "confidence": round(final_confidence, 2),
+            "report": report,
+            # 保留调试数据
+            "_debug": {
+                "raw_scores": dict(category_scores),
+                "llm_analysis": llm_analysis
+            }
         }
         
     except Exception as e:

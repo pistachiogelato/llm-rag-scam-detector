@@ -89,6 +89,7 @@ def load_scam_texts_from_db(batch_size=1000, days=30) -> List[str]:
         WHERE scam_text IS NOT NULL AND scam_text != ''
         AND timestamp >= %s
         ORDER BY timestamp DESC
+        LIMIT 10000
     """
     cur.execute(query, (since,))
     
