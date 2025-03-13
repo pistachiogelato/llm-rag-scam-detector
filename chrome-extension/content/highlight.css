@@ -3,10 +3,15 @@
   padding: 2px;
   border-radius: 2px;
   position: relative;
+  transition: background-color 0.3s ease;
 }
 
-.scam-highlight:hover::after {
-  content: "⚠️ Potential scam content";
+.scam-highlight:hover {
+  background-color: #ffd740;
+}
+
+.scam-highlight::after {
+  content: "⚠️ Suspicious content: " attr(data-keyword);
   position: absolute;
   bottom: 100%;
   left: 50%;
@@ -18,4 +23,20 @@
   font-size: 12px;
   white-space: nowrap;
   z-index: 1000;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.scam-highlight:hover::after {
+  opacity: 1;
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+
+.scam-highlight.new {
+  animation: pulse 1s ease-in-out;
 }

@@ -3,25 +3,38 @@
 <head>
   <meta charset="UTF-8">
   <link rel="stylesheet" href="popup.css">
+  <link rel="stylesheet" href="animations.css">
 </head>
 <body>
   <div class="container">
     <h2>Scam Detector</h2>
     <button id="scanPage">Scan Page</button>
+
     <div id="results" class="results hidden">
       <div class="status">
         <span id="statusIcon"></span>
         <span id="statusText"></span>
       </div>
+
+      <!-- 添加 Gelato 动画容器 -->
+      <div class="gelato-container">
+        <div id="gelato" class="gelato">🍦</div>
+        <div id="messageContainer" class="message-container"></div>
+      </div>
+
       <div id="detailsContainer" class="details">
         <h3>Detection Results:</h3>
         <div id="scamReport"></div>
         <div id="confidence"></div>
       </div>
     </div>
+
+
     <div id="loading" class="loading hidden">
+      <div class="gelato">🍦</div>
       Scanning page...
     </div>
+<!--
     <div class="settings">
       <button id="settingsBtn">⚙️</button>
       <div id="settingsPanel" class="hidden">
@@ -35,6 +48,8 @@
         </label>
       </div>
     </div>
+-->
+    
   </div>
   <script src="popup.js"></script>
 </body>

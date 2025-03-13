@@ -6,7 +6,33 @@ document.addEventListener('DOMContentLoaded', function() {
     const confidence = document.getElementById('confidence');
     const statusText = document.getElementById('statusText');
     const statusIcon = document.getElementById('statusIcon');
-  
+    const gelato = document.getElementById('gelato');
+    const messageContainer = document.getElementById('messageContainer');
+
+    async function highlightScamText(text, matches) {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab) return;
+      
+      // 发送消息给 content script 来高亮显示可疑文本
+      chrome.tabs.sendMessage(tab.id, {
+          action: 'highlightScam',
+          matches: matches
+      });
+    }
+    
+    function updateGelatoState(isScam) {
+        if (isScam) {
+            gelato.classList.add('melting');
+            messageContainer.className = 'message-container message-warning';
+            messageContainer.textContent = 'Be cautious, your gelato is melting! 🌡️';
+        } else {
+            gelato.classList.remove('melting');
+            messageContainer.className = 'message-container message-safe';
+            messageContainer.textContent = 'Enjoy your gelato! 😊';
+        }
+    }
+
+
     scanButton.addEventListener('click', async () => {
       try {
         loading.classList.remove('hidden');
@@ -56,6 +82,13 @@ document.addEventListener('DOMContentLoaded', function() {
         
         const data = await apiResponse.json();
         updateResults(data);
+        // 更新 Gelato 状态
+        updateGelatoState(data.scam_detected);
+            
+        // 如果检测到诈骗，高亮显示可疑文本
+        if (data.scam_detected && data.matched_keywords) {
+            await highlightScamText(response.pageText, data.matched_keywords);
+        }
         
       } catch (error) {
         console.error('Error:', error);
@@ -89,7 +122,7 @@ document.addEventListener('DOMContentLoaded', function() {
   
       confidence.textContent = `Confidence: ${(data.confidence * 100).toFixed(1)}%`;
     }
-
+    /*
     // 保存检测历史
     function saveHistory(url, result) {
       chrome.storage.local.get(['scanHistory'], function(data) {
@@ -104,5 +137,7 @@ document.addEventListener('DOMContentLoaded', function() {
           scanHistory: history.slice(0, 50)
         });
       });
+      
     }
+    */
   });

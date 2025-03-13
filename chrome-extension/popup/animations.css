@@ -1,0 +1,47 @@
+@keyframes melt {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(0.8) translateY(20%);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(0.6) translateY(40%);
+    opacity: 0.3;
+  }
+}
+
+.gelato-container {
+  text-align: center;
+  margin: 20px 0;
+  position: relative;
+}
+
+.gelato {
+  font-size: 48px;
+  display: inline-block;
+}
+
+.gelato.melting {
+  animation: melt 2s ease-in-out infinite;
+}
+
+.message-container {
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 8px;
+  text-align: center;
+  font-weight: bold;
+}
+
+.message-safe {
+  background-color: #e8f5e9;
+  color: #2e7d32;
+}
+
+.message-warning {
+  background-color: #fff3e0;
+  color: #ef6c00;
+} 

@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from typing import List
 import re 
 from collections import defaultdict
-
+import requests
 load_dotenv()
 
 # Initialize the embedding model globally
@@ -91,16 +91,7 @@ def retrieve_similar(query_text: str, index: faiss.IndexFlatL2, scam_texts: list
 
 def llm_predict(prompt: str) -> str:
     """
-    Generate a response from the LLM API based on the provided prompt.
-    
-    Args:
-        prompt (str): The input prompt for the LLM.
-    
-    Returns:
-        str: The generated text from the LLM.
-    
-    Raises:
-        Exception: If API token is missing or LLM call fails.
+    使用OpenRouter API生成响应
     """
     api_token = os.getenv("API_TOKEN")
     if not api_token:
@@ -108,18 +99,50 @@ def llm_predict(prompt: str) -> str:
         raise Exception("API_TOKEN is not set in environment variables.")
 
     try:
-        client = InferenceClient(provider="sambanova", api_key=api_token)
-        messages = [{"role": "user", "content": prompt}]
-        logging.info(f"Sending request to LLM: {prompt[:100]}...")  #debug
-        completion = client.chat.completions.create(
-            model="deepseek-ai/DeepSeek-R1",
-            messages=messages,
-            max_tokens=150
+        headers = {
+            "Authorization": f"Bearer {api_token}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "http://localhost:8000",  # 您的API地址
+            "X-Title": "Scam Detector"  # 您的应用名称
+        }
+
+        payload = {
+            "model": "deepseek/deepseek-r1-zero:free",  # 使用免费模型
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        }
+
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            json=payload  # 使用json参数而不是data
         )
-        logging.info("LLM request successful")
-        return completion.choices[0].message.content
+        
+        # 添加详细的错误日志
+        if not response.ok:
+            logging.error(f"OpenRouter API Error: {response.status_code}")
+            logging.error(f"Response content: {response.text}")
+            response.raise_for_status()
+
+        result = response.json()
+        
+        # 添加响应内容日志
+        logging.info(f"LLM Response: {result}")
+        
+        return result['choices'][0]['message']['content']
+
+    except requests.exceptions.RequestException as e:
+        logging.error(f"OpenRouter API Request Error: {str(e)}")
+        raise
+    except KeyError as e:
+        logging.error(f"OpenRouter API Response Parse Error: {str(e)}")
+        raise
     except Exception as e:
-        logging.error(f"LLM API error: {str(e)}", exc_info=True)  # debug
+        logging.error(f"Unexpected error in llm_predict: {str(e)}")
         raise
 
 def generate_report(user_text: str, retrieved_cases: list) -> str:
@@ -229,22 +252,30 @@ def detect_and_generate_report(user_text: str, scam_texts: list, faiss_index: fa
                 
                 Similar cases found: {retrieved_cases[:2] if retrieved_cases else 'None'}
                 
-                Provide a brief analysis and confidence score (0-1).
+                Provide a brief analysis and include a confidence score between 0 and 1 in this format:
+                Confidence: [score]
+                Analysis: [your analysis]
                 """
                 
                 llm_analysis = llm_predict(llm_prompt)
+                logging.info(f"LLM Analysis received: {llm_analysis}")
                 
-                # 解析 LLM 的置信度（假设 LLM 会在回复中包含数字置信度）
+                # 提取置信度
+                confidence_match = re.search(r'Confidence:\s*(0\.\d+|1\.0)', llm_analysis)
+                if confidence_match:
+                    llm_confidence = float(confidence_match.group(1))
+                else:
+                    # 如果没有找到置信度，使用启发式规则
+                    llm_confidence = 0.7 if "scam" in llm_analysis.lower() else 0.3
                 
-                confidence_match = re.search(r'confidence[:\s]+([0-9.]+)', llm_analysis.lower())
-                llm_confidence = float(confidence_match.group(1)) if confidence_match else 0.5
+                # 综合评分
+                final_confidence = min(max((pattern_score * 0.4 + llm_confidence * 0.6), 0.0), 1.0)
                 
-                # 综合评分 置信度归一化处理
-                final_confidence = min(max(pattern_score * 0.4 + llm_confidence * 0.6, 0.0), 1.0)
             except Exception as e:
                 logging.error(f"LLM analysis failed: {e}")
-                final_confidence = pattern_score
-                llm_analysis = "LLM analysis unavailable."
+                # 在LLM失败时使用基于规则的评分
+                final_confidence = min(pattern_score * 1.2, 1.0)
+                llm_analysis = f"LLM analysis unavailable. Using pattern-based detection only. Error: {str(e)}"
         else:
             final_confidence = pattern_score
             llm_analysis = "No significant risk indicators found."
