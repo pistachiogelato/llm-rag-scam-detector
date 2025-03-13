@@ -70,26 +70,9 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         
         // 调用API
-        const apiResponse = await fetch('http://localhost:8000/detect', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: response.pageText })
-        });
-        
-        if (!apiResponse.ok) {
-          throw new Error(`HTTP error! status: ${apiResponse.status}`);
-        }
-        
-        const data = await apiResponse.json();
-        updateResults(data);
-        // 更新 Gelato 状态
-        updateGelatoState(data.scam_detected);
+        const data = await callDetectAPI(response.pageText);
+        await updateResults(data);
             
-        // 如果检测到诈骗，高亮显示可疑文本
-        if (data.scam_detected && data.matched_keywords) {
-            await highlightScamText(response.pageText, data.matched_keywords);
-        }
-        
       } catch (error) {
         console.error('Error:', error);
         results.innerHTML = `<div class="error">Error: ${error.message}</div>`;
@@ -99,28 +82,35 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     });
   
-    function updateResults(data) {
-      if (data.scam_detected) {
-        statusText.textContent = 'Potential Scam Detected!';
-        statusText.className = 'warning';
-        statusIcon.innerHTML = '⚠️';
-      } else {
-        statusText.textContent = 'No Scam Detected';
-        statusText.className = 'safe';
-        statusIcon.innerHTML = '✅';
-      }
-  
-      scamReport.innerHTML = `
-        <p><strong>Analysis:</strong> ${data.report}</p>
-        ${data.retrieved_cases && data.retrieved_cases.length > 0 ? `
-          <p><strong>Similar cases found:</strong></p>
-          <ul>
-            ${data.retrieved_cases.map(caseItem => `<li>${caseItem}</li>`).join('')}
-          </ul>
-        ` : ''}
-      `;
-  
-      confidence.textContent = `Confidence: ${(data.confidence * 100).toFixed(1)}%`;
+    async function updateResults(data) {
+        console.log('Received detection results:', data);
+        
+        // 更新状态和图标
+        const isScam = data.scam_detected;
+        statusText.textContent = isScam ? 'Potential Scam Detected!' : 'No Scam Detected';
+        statusText.className = isScam ? 'warning' : 'safe';
+        statusIcon.innerHTML = isScam ? '⚠️' : '✅';
+        
+        // 更新冰淇淋状态
+        updateGelatoState(isScam);
+        
+        // 更新报告内容
+        scamReport.innerHTML = `
+            <p><strong>Analysis:</strong> ${data.report}</p>
+            <p><strong>Confidence:</strong> ${(data.confidence * 100).toFixed(1)}%</p>
+        `;
+        
+        // 如果检测到诈骗且有关键词，进行高亮
+        if (isScam && data.matched_keywords && data.matched_keywords.length > 0) {
+            console.log('Highlighting keywords:', data.matched_keywords);
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (tab) {
+                chrome.tabs.sendMessage(tab.id, {
+                    action: 'highlightScam',
+                    matches: data.matched_keywords
+                });
+            }
+        }
     }
     /*
     // 保存检测历史
@@ -140,4 +130,36 @@ document.addEventListener('DOMContentLoaded', function() {
       
     }
     */
+
+    async function callDetectAPI(text) {
+        const maxRetries = 3;
+        let retryCount = 0;
+        
+        while (retryCount < maxRetries) {
+            try {
+                const response = await fetch('http://localhost:8000/detect', {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify({ text: text })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                return await response.json();
+            } catch (error) {
+                retryCount++;
+                console.error(`API call attempt ${retryCount} failed:`, error);
+                if (retryCount === maxRetries) {
+                    throw new Error('API connection failed after multiple attempts');
+                }
+                // 等待1秒后重试
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+        }
+    }
   });

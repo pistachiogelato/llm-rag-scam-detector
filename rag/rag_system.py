@@ -306,12 +306,20 @@ def detect_and_generate_report(user_text: str, scam_texts: list, faiss_index: fa
             3. Report suspicious requests to platform administrators
                     """
 
+        # 收集匹配的关键词
+        matched_keywords = []
+        for category, data in keyword_patterns.items():
+            for pattern, weight in data["patterns"]:
+                matches = re.finditer(pattern, text_lower)
+                for match in matches:
+                    matched_keywords.append(match.group())
+
         return {
             "scam_detected": final_confidence > 0.5,
             "scam_type": next(iter(category_scores), "unknown"),
             "confidence": round(final_confidence, 2),
             "report": report,
-            # 保留调试数据
+            "matched_keywords": list(set(matched_keywords)),  # 添加匹配的关键词
             "_debug": {
                 "raw_scores": dict(category_scores),
                 "llm_analysis": llm_analysis

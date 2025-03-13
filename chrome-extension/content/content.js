@@ -69,42 +69,48 @@ function highlightScamText(matches) {
   walkText(document.body);
 }*/
 function highlightScamText(keywords) {
-  // 移除现有的高亮
-  document.querySelectorAll('.scam-highlight').forEach(el => {
-      const parent = el.parentNode;
-      parent.replaceChild(document.createTextNode(el.textContent), el);
-  });
-  
-  // 为每个关键词创建正则表达式
-  const patterns = keywords.map(keyword => 
-      new RegExp(`(${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')
-  );
-  
-  // 遍历文本节点并高亮匹配内容
-  function walkText(node) {
-      if (node.nodeType === 3) {
-          let text = node.textContent;
-          let matched = false;
-          
-          patterns.forEach(pattern => {
-              if (pattern.test(text)) {
-                  matched = true;
-                  text = text.replace(pattern, match => 
-                      `<mark class="scam-highlight" data-keyword="${match}">${match}</mark>`
-                  );
-              }
-          });
-          
-          if (matched) {
-              const span = document.createElement('span');
-              span.innerHTML = text;
-              node.parentNode.replaceChild(span, node);
-          }
-      } else if (node.nodeType === 1 && 
-                !['SCRIPT', 'STYLE', 'MARK'].includes(node.tagName)) {
-          Array.from(node.childNodes).forEach(walkText);
-      }
-  }
-  
-  walkText(document.body);
+    if (!keywords || keywords.length === 0) {
+        console.log('No keywords to highlight');
+        return;
+    }
+    
+    console.log('Highlighting keywords:', keywords);
+    
+    // 移除现有的高亮
+    document.querySelectorAll('.scam-highlight').forEach(el => {
+        const parent = el.parentNode;
+        parent.replaceChild(document.createTextNode(el.textContent), el);
+    });
+    
+    // 创建一个包含所有关键词的正则表达式
+    const pattern = new RegExp(
+        keywords.map(kw => kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'),
+        'gi'
+    );
+    
+    function highlightNode(node) {
+        if (node.nodeType === Node.TEXT_NODE) {
+            const text = node.textContent;
+            if (pattern.test(text)) {
+                const span = document.createElement('span');
+                span.innerHTML = text.replace(pattern, match => 
+                    `<mark class="scam-highlight" data-keyword="${match}">${match}</mark>`
+                );
+                node.parentNode.replaceChild(span, node);
+            }
+        } else if (
+            node.nodeType === Node.ELEMENT_NODE && 
+            !['SCRIPT', 'STYLE', 'MARK'].includes(node.tagName)
+        ) {
+            Array.from(node.childNodes).forEach(highlightNode);
+        }
+    }
+    
+    highlightNode(document.body);
+    
+    // 添加动画效果
+    document.querySelectorAll('.scam-highlight').forEach(el => {
+        el.classList.add('new');
+        setTimeout(() => el.classList.remove('new'), 1000);
+    });
 }
