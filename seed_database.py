@@ -61,4 +61,4 @@ def seed_sms_spam_data(csv_path):
             conn.close()
 
 if __name__ == "__main__":
-    seed_sms_spam_data("data/sms_spam.csv")
+    seed_sms_spam_data("data/merged_sms.csv")

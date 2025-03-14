@@ -89,7 +89,7 @@ def load_scam_texts_from_db(batch_size=1000, days=30) -> List[str]:
         WHERE scam_text IS NOT NULL AND scam_text != ''
         AND timestamp >= %s
         ORDER BY timestamp DESC
-        LIMIT 10000
+        
     """
     cur.execute(query, (since,))
     
@@ -104,89 +104,24 @@ def load_scam_texts_from_db(batch_size=1000, days=30) -> List[str]:
     conn.close()
     return texts
 
-# Data source handling for URLhaus data
-def fetch_urlhaus_data() -> List[str]:
-    """
-    Fetch malicious URLs from URLhaus.
-    """
-    url = "https://urlhaus.abuse.ch/downloads/text/"
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        # Filter out comment lines and empty lines
-        return [line.strip() for line in response.text.splitlines() if line.strip() and not line.startswith("#")]
-    except Exception as e:
-        logging.error(f"Error fetching URLhaus data: {e}")
-        return []
 
-def seed_urlhaus_data():
-    """
-    Seed URLhaus data into the database with timeout control and batch processing.
-    """
-    start_time = time.time()
-    max_duration = 300  # 5 minutes timeout
-    try:
-        urls = list(set(fetch_urlhaus_data()))
-        if not urls:
-            logging.info("No URL records to process.")
-            return
-        records = [("URLhaus", url, "malware", 0.9) for url in urls]
-        # Deduplicate records in memory
-        seen = set()
-        deduped_records = []
-        for r in records:
-            if r[1] not in seen:
-                seen.add(r[1])
-                deduped_records.append(r)
-        total = len(deduped_records)
-        logging.info(f"Preparing to insert {total} URL records into the database.")
-        
-        conn = get_db_connection()
-        cur = conn.cursor()
-        chunk_size = 5000
-        for i, chunk in enumerate(chunked_iterable(deduped_records, chunk_size)):
-            if time.time() - start_time > max_duration:
-                logging.warning("Insertion timeout reached, stopping batch insertion.")
-                break
-            try:
-                query = sql.SQL("""
-                    INSERT INTO realtime_scams (source, scam_text, scam_type, confidence)
-                    VALUES {}
-                    ON CONFLICT (scam_text) DO NOTHING
-                """).format(sql.SQL(',').join([sql.Literal(r) for r in chunk]))
-                cur.execute(query)
-                conn.commit()
-                logging.debug(f"Inserted batch {i+1} / {total//chunk_size+1}.")
-            except Exception as e:
-                logging.error(f"Batch {i} insertion failed: {e}", exc_info=True)
-                conn.rollback()
-        duration = time.time() - start_time
-        logging.info(f"URL data insertion completed in {duration:.2f}s, rate: {total/duration:.1f} records/s")
-    except Exception as e:
-        logging.error(f"URL data seeding failed: {e}", exc_info=True)
-    finally:
-        try:
-            cur.close()
-            conn.close()
-        except Exception:
-            pass
 
 def seed_sms_scams():
     """
     Seed SMS scam data from a CSV file into the database.
     """
-    if not os.path.exists("data/sms_spam.csv"):
+    if not os.path.exists("data/merged_sms.csv"):
         logging.warning("SMS spam data file not found.")
         return
     conn = get_db_connection()
     cur = conn.cursor()
     try:
-        with open("data/sms_spam.csv", "rb") as f:
+        with open("data/merged_sms.csv", "rb") as f:
             raw_data = f.read()
             result = chardet.detect(raw_data)
             encoding = result['encoding'] or 'latin1'
             logging.info(f"Detected file encoding: {encoding}")
-        with open("data/sms_spam.csv", encoding=encoding) as f:
+        with open("data/merged_sms.csv", encoding=encoding) as f:
             reader = csv.reader(f)
             next(reader)  # Skip header
             records = [("sms", row[1], row[0], 0.8) for row in reader if row and row[0].strip().lower() == "spam"]
@@ -321,12 +256,16 @@ async def async_load_initial_data():
 
 async def load_complete_data():
     """
-    Load complete dataset in background
+    加载完整数据集
     """
     try:
         await asyncio.sleep(5)  # 等待服务完全启动
-        await asyncio.to_thread(seed_sms_scams)
-        await asyncio.to_thread(seed_urlhaus_data)
+        
+        # 运行数据处理脚本
+        from process_data import main as process_data
+        await asyncio.to_thread(process_data)
+        
+        # 更新FAISS索引
         await asyncio.to_thread(update_faiss_index)
         logging.info("Complete data loading finished")
     except Exception as e:
