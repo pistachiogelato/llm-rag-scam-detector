@@ -36,27 +36,23 @@ class FAISSManager:
     
     def _build_index(self):
         """构建索引时添加进度提示"""
-        from tqdm import tqdm
-        
         logger.info(f"开始构建FAISS索引，使用训练数据: {self.train_data_path}")
         
         # 加载数据
         df = pd.read_csv(self.train_data_path)
-        spam_texts = df[df['type'] == 'spam']['text'].tolist()
         
+        # 兼容不同列顺序
+        if 'text' in df.columns and 'type' in df.columns:
+            spam_texts = df[df['type'] == 'spam']['text'].tolist()
+        else:
+            raise ValueError("CSV文件必须包含'text'和'type'列")
+
         if not spam_texts:
             raise ValueError("训练数据中未找到spam样本，无法构建索引")
         
         # 生成嵌入
         model = SentenceTransformer(EMBEDDING_MODEL_NAME, device='cpu')
-        embeddings = []
-        batch_size = 32  # 减小批处理以降低内存消耗
-        
-        for i in tqdm(range(0, len(spam_texts), batch_size), desc="生成嵌入"):
-            batch = spam_texts[i:i+batch_size]
-            embeddings.extend(model.encode(batch, show_progress_bar=False))
-        
-        embeddings = np.array(embeddings)
+        embeddings = model.encode(spam_texts, show_progress_bar=True)
         
         # 创建索引
         dim = embeddings.shape[1]
@@ -70,15 +66,17 @@ class FAISSManager:
 class FraudDetector:
     """纯本地风险评估器"""
     def __init__(self):
-        # 加载本地模型
-        self.faiss = FAISSManager(
-            index_path=FAISS_INDEX_PATH,
-            train_data_path=TRAIN_DATA_PATH  # 使用配置路径
+        # 初始化文本编码模型
+        self.model = SentenceTransformer(
+            EMBEDDING_MODEL_NAME,
+            cache_folder=str(MODEL_DIR),
+            device='cpu'
         )
-        # 加载FAISS索引
+        
+        # 初始化FAISS管理器（使用配置路径）
         self.faiss = FAISSManager(
             index_path=FAISS_INDEX_PATH,
-            train_data_path=DATA_DIR / "processed" / "train_data.csv"  # 指定训练数据路径
+            train_data_path=TRAIN_DATA_PATH
         )
         
         # 配置相似度转换函数（相似度越高风险越大）
@@ -91,7 +89,7 @@ class FraudDetector:
             embedding = self.model.encode(text, convert_to_numpy=True)
             
             # FAISS相似度检索
-            distances, _ = self.faiss.search(embedding.reshape(1, -1))
+            distances, _ = self.faiss.index.search(embedding.reshape(1, -1).astype('float32'))
             avg_similarity = np.mean(distances)
             
             # 转换为风险分 [0,1]
@@ -104,19 +102,23 @@ class FraudDetector:
 class ThresholdOptimizer:
     def __init__(
         self,
-        data_path: Path = TEST_DATA_PATH,  # 默认使用配置的测试数据路径
+        data_path: Path = TEST_DATA_PATH,
         test_size: int = 200,
         thresholds: List[float] = DEFAULT_THRESHOLDS,
         batch_size: int = BATCH_SIZE
     ):
-        # 添加路径验证
+        # 验证测试数据路径
         if not data_path.exists():
             raise FileNotFoundError(f"测试数据文件不存在: {data_path}")
         
+        self.data_path = data_path
+        self.test_size = test_size
+        self.thresholds = thresholds
+        self.batch_size = batch_size
         
-        # 修复路径创建：递归创建目录
+        # 创建输出目录
         self.output_dir = DATA_DIR / "eval_results"
-        self.output_dir.mkdir(parents=True, exist_ok=True)  # <- 关键修改
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         
         # 初始化检测器
         self.detector = FraudDetector()
@@ -125,6 +127,11 @@ class ThresholdOptimizer:
         """执行优化流程"""
         # 加载数据
         df = pd.read_csv(self.data_path)
+        
+        # 兼容不同列顺序
+        if 'text' not in df.columns or 'type' not in df.columns:
+            raise ValueError("测试数据必须包含'text'和'type'列")
+        
         test_data = self._sample_data(df)
         
         # 获取预测结果
@@ -204,11 +211,12 @@ class ThresholdOptimizer:
         plt.close()
 
 async def main():
-    optimizer = ThresholdOptimizer(
-        data_path=DATA_DIR / "processed" / "test_data.csv",
-        test_size=200
-    )
-    await optimizer.optimize()
+    try:
+        optimizer = ThresholdOptimizer()
+        await optimizer.optimize()
+    except Exception as e:
+        logger.error(f"程序运行失败: {str(e)}")
+        raise
 
 if __name__ == "__main__":
     asyncio.run(main())
