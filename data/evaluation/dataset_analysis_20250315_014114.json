@@ -1,0 +1,16 @@
+{
+  "total_samples": 9109,
+  "label_distribution": {
+    "spam": 4627,
+    "ham": 4482
+  },
+  "label_percentages": {
+    "spam": 0.508,
+    "ham": 0.492
+  },
+  "text_length_stats": {
+    "mean": 96.9272148424635,
+    "max": 910,
+    "min": 10
+  }
+}
