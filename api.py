@@ -100,8 +100,18 @@ async def detect_scam(request: TextRequest):
         logger.info(f"Received text for analysis: {text[:100]}...")
         result = await fraud_detector.analyze_text(text)
         
-        risk_score = float(result["risk_score"])
-        risk_detected = bool(risk_score > 0.5)
+        # Use the LLM analysis risk score to determine risk level
+        llm_risk_score = float(result["llm_analysis"].get("risk_score", 0))
+        risk_detected = bool(llm_risk_score > 0.5)
+        if llm_risk_score >= 0.7:
+            computedRiskLevel = "Critical Risk"
+        elif llm_risk_score >= 0.5:
+            computedRiskLevel = "High Risk"
+        elif llm_risk_score >= 0.3:
+            computedRiskLevel = "Medium Risk"
+        else:
+            computedRiskLevel = "Low Risk"
+        
         report = result.get("report", "No detailed report available")
         if isinstance(report, str):
             report = report.replace('\\', '\\\\')
@@ -117,10 +127,11 @@ async def detect_scam(request: TextRequest):
             "timestamp": datetime.utcnow().isoformat(),
             "input_text": text,
             "risk_detected": risk_detected,
-            "confidence": round(risk_score, 4),
-            "risk_level": result["risk_level"],
+            "confidence": round(llm_risk_score, 4),
+            "risk_score": round(llm_risk_score, 4),  # Use LLM risk score for display
+            "risk_level": computedRiskLevel,         # Override risk level from LLM
             "report": report,
-            "patterns": matched_patterns,  # For frontend compatibility
+            "patterns": matched_patterns,  # (Unused on frontend)
             "pattern_analysis": {
                 "total_score": float(result["pattern_analysis"]["total_score"]),
                 "matched_patterns": matched_patterns

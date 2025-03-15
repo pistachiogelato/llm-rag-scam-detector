@@ -3,10 +3,12 @@
     z-index: 10000;
     width: 80px; /* Increased width */
     height: 80px; /* Increased height */
-    font-size: 80px; /* Added font-size to scale emoji */
+    font-size: 80px; /* Scale emoji */
     cursor: pointer;
     transition: transform 0.3s ease;
     filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));
+    opacity: 1;
+    transition: opacity 0.3s ease, transform 0.3s ease;
   }
   
   .gelato-icon:hover {
@@ -19,6 +21,14 @@
   
   .gelato-icon.danger {
     animation: shake 0.5s infinite;
+  }
+  
+  .gelato-icon.warning {
+    animation: warning-pulse 2s infinite;
+  }
+  
+  .gelato-icon.caution {
+    animation: caution-pulse 2s infinite;
   }
   
   .risk-highlight {
@@ -66,6 +76,18 @@
     75% { transform: translateX(5px); }
   }
   
+  @keyframes warning-pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.1) rotate(5deg); }
+    100% { transform: scale(1); }
+  }
+  
+  @keyframes caution-pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.05) rotate(-5deg); }
+    100% { transform: scale(1); }
+  }
+  
   .tooltip {
     position: absolute;
     background: rgba(0,0,0,0.8);
@@ -79,9 +101,28 @@
   }
   
   .report-header {
-    padding: 15px;
-    border-bottom: 1px solid #eee;
-    margin-bottom: 20px;
+    padding: 20px;
+    border-radius: 8px 8px 0 0;
+    margin: -20px -20px 20px -20px;
+    color: white;
+    transition: background-color 0.3s ease;
+  }
+  
+  .report-header.critical-risk {
+    background: linear-gradient(135deg, #d32f2f 0%, #c62828 100%);
+  }
+  
+  .report-header.high-risk {
+    background: linear-gradient(135deg, #f57c00 0%, #ef6c00 100%);
+  }
+  
+  .report-header.medium-risk {
+    background: linear-gradient(135deg, #ffd54f 0%, #ffc107 100%);
+    color: #333;
+  }
+  
+  .report-header.low-risk {
+    background: linear-gradient(135deg, #66bb6a 0%, #43a047 100%);
   }
   
   .risk-title {
@@ -92,7 +133,7 @@
   .risk-title.high-risk { color: #d32f2f; }
   .risk-title.medium-risk { color: #f57c00; }
   .risk-title.low-risk { color: #388e3c; }
-  
+    
   .confidence-score {
     font-size: 16px;
     color: #666;
@@ -148,5 +189,21 @@
     color: #666;
     font-size: 14px;
     line-height: 1.4;
+  }
+  
+  .report-footer {
+    margin-top: 20px;
+    padding: 15px;
+    text-align: center;
+    font-size: 18px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    animation: pulse-subtle 2s infinite;
+  }
+  
+  @keyframes pulse-subtle {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.02); }
+    100% { transform: scale(1); }
   }
   

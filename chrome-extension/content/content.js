@@ -17,21 +17,29 @@ class ScamDetector {
     }
   
     createGelatoIcon() {
-      this.gelatoIcon = document.createElement('div');
-      this.gelatoIcon.className = 'gelato-icon';
-      this.gelatoIcon.innerHTML = '🍦';
-      this.gelatoIcon.style.display = 'none';
-      document.body.appendChild(this.gelatoIcon);
+      try {
+        this.gelatoIcon = document.createElement('div');
+        this.gelatoIcon.className = 'gelato-icon';
+        this.gelatoIcon.innerHTML = '🍦';
+        this.gelatoIcon.style.display = 'none';
+        document.body.appendChild(this.gelatoIcon);
+      } catch (error) {
+        console.error('Error in createGelatoIcon:', error);
+      }
     }
   
     createReportPanel() {
-      this.reportPanel = document.createElement('div');
-      this.reportPanel.className = 'report-panel';
-      this.reportPanel.innerHTML = `
-        <h2>Risk Analysis Report</h2>
-        <div id="report-content"></div>
-      `;
-      document.body.appendChild(this.reportPanel);
+      try {
+        this.reportPanel = document.createElement('div');
+        this.reportPanel.className = 'report-panel';
+        this.reportPanel.innerHTML = `
+          <h2>Risk Analysis Report</h2>
+          <div id="report-content"></div>
+        `;
+        document.body.appendChild(this.reportPanel);
+      } catch (error) {
+        console.error('Error in createReportPanel:', error);
+      }
     }
   
     setupEventListeners() {
@@ -54,7 +62,7 @@ class ScamDetector {
       document.addEventListener('click', documentClickHandler);
       this.eventListeners.push({ element: document, event: 'click', handler: documentClickHandler });
   
-      // Use pagehide event instead of unload to avoid deprecation warning.
+      // Use pagehide instead of unload to avoid deprecation warning.
       window.addEventListener('pagehide', () => this.cleanup());
     }
   
@@ -62,6 +70,12 @@ class ScamDetector {
       try {
         const selection = window.getSelection();
         const text = selection.toString().trim();
+  
+        // Reset icon to default on new selection
+        if (this.gelatoIcon) {
+          this.gelatoIcon.className = 'gelato-icon';
+          this.gelatoIcon.innerHTML = '🍦';
+        }
   
         if (text.length < 50 || text.length > 2000) {
           this.hideGelatoIcon();
@@ -94,10 +108,25 @@ class ScamDetector {
       try {
         const range = selection.getRangeAt(0);
         const rect = range.getBoundingClientRect();
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
   
         if (this.gelatoIcon) {
-          this.gelatoIcon.style.left = `${rect.right + 20}px`;
-          this.gelatoIcon.style.top = `${rect.bottom + window.scrollY + 20}px`;
+          let left = rect.right + 20;
+          let top = rect.bottom + window.scrollY + 20;
+  
+          if (left + 80 > viewportWidth) {
+            left = rect.left - 100;
+          }
+          if (top + 80 > window.scrollY + viewportHeight) {
+            top = rect.top + window.scrollY - 100;
+          }
+          left = Math.max(20, Math.min(left, viewportWidth - 100));
+          top = Math.max(20, top);
+  
+          this.gelatoIcon.style.transition = 'all 0.3s ease';
+          this.gelatoIcon.style.left = `${left}px`;
+          this.gelatoIcon.style.top = `${top}px`;
           this.gelatoIcon.style.display = 'block';
         }
       } catch (error) {
@@ -113,104 +142,111 @@ class ScamDetector {
   
     async analyzeText() {
       if (this.isAnalyzing) return;
-  
       this.isAnalyzing = true;
-      if (this.gelatoIcon) {
-        this.gelatoIcon.className = 'gelato-icon analyzing';
-        this.gelatoIcon.innerHTML = '⏳';
-      }
   
       try {
+        // Fade out current icon
+        if (this.gelatoIcon) {
+          this.gelatoIcon.style.transition = 'opacity 0.3s ease';
+          this.gelatoIcon.style.opacity = '0';
+          await this.delay(300);
+          this.gelatoIcon.className = 'gelato-icon analyzing';
+          this.gelatoIcon.innerHTML = '⏳';
+          this.gelatoIcon.style.opacity = '1';
+        }
+  
         const response = await fetch('http://localhost:8000/detect', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text: this.currentSelection })
         });
   
         if (!response.ok) throw new Error('API request failed');
-  
         const data = await response.json();
-        this.handleAnalysisResult(data);
+        await this.delay(500);
+        await this.handleAnalysisResult(data);
+  
       } catch (error) {
         console.error('Error in analyzeText:', error);
         this.showError();
+      }
+    }
+  
+    delay(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+  
+    async handleAnalysisResult(data) {
+      try {
+        const riskScore = parseFloat(data.risk_score);
+        const riskLevel = this.calculateRiskLevel(riskScore);
+        await this.showReport(data, riskLevel);
+        await this.delay(300);
+        await this.updateGelatoState(riskLevel, riskScore);
+      } catch (error) {
+        console.error('Error in handleAnalysisResult:', error);
       } finally {
-        // Mark analysis as complete only after report is shown.
-        // Do not update the icon here to ensure spinner remains until updateGelatoState runs.
         this.isAnalyzing = false;
       }
     }
   
-    handleAnalysisResult(data) {
-      try {
-        const riskLevel = data.risk_score > 0.7 ? 'high' :
-                          data.risk_score > 0.3 ? 'low' : 'safe';
-  
-        // Update icon based on risk and show report.
-        this.updateGelatoState(riskLevel);
-        this.highlightText(riskLevel);
-        this.showReport(data);
-      } catch (error) {
-        console.error('Error in handleAnalysisResult:', error);
-      }
+    calculateRiskLevel(score) {
+      if (score >= 0.7) return 'critical';
+      if (score >= 0.5) return 'high';
+      if (score >= 0.3) return 'medium';
+      return 'low';
     }
   
-    updateGelatoState(riskLevel) {
+    async updateGelatoState(riskLevel, score) {
       try {
         if (this.gelatoIcon) {
-          this.gelatoIcon.className = `gelato-icon ${riskLevel === 'high' ? 'danger' : ''}`;
-          // Update icon from spinner (⏳) to a risk-specific icon.
-          this.gelatoIcon.innerHTML = riskLevel === 'high' ? '🍦🔥' :
-                                       riskLevel === 'low' ? '🍦⚠️' : '🍦';
+          const newState = this.getGelatoState(riskLevel, score);
+          this.gelatoIcon.style.opacity = '0';
+          await this.delay(300);
+          this.gelatoIcon.className = `gelato-icon ${newState.className}`;
+          this.gelatoIcon.innerHTML = newState.icon;
+          this.gelatoIcon.style.opacity = '1';
         }
       } catch (error) {
         console.error('Error in updateGelatoState:', error);
       }
     }
   
-    highlightText(riskLevel) {
-      if (riskLevel === 'safe') return;
-  
-      try {
-        const range = window.getSelection().getRangeAt(0);
-        const span = document.createElement('span');
-        span.className = `risk-highlight ${riskLevel}`;
-        range.surroundContents(span);
-      } catch (error) {
-        console.error('Error in highlightText:', error);
+    getGelatoState(riskLevel, score) {
+      switch (riskLevel) {
+        case 'critical':
+          return { icon: '🍦🔥 DANGER!', className: 'danger' };
+        case 'high':
+          return { icon: '🍦⚠️ Warning!', className: 'warning' };
+        case 'medium':
+          return { icon: '🍦❗ Stay Alert!', className: 'caution' };
+        default:
+          return { icon: '🍦✨ Safe', className: '' };
       }
     }
   
-    showReport(data) {
+    async showReport(data, riskLevel) {
       try {
+        // Display only risk level, risk score, and recommended actions
         const content = `
-          <div class="report-section">
-            <h3>Risk Level: ${this.getRiskLevelText(data.risk_score)}</h3>
-            <p>Confidence: ${data.confidence}</p>
+          <div class="report-header ${riskLevel}-risk">
+            <h3 class="risk-title">
+              ${this.getRiskLevelEmoji(riskLevel)} 
+              ${this.getRiskLevelText(riskLevel)}
+            </h3>
+            <div class="confidence-score">
+              <span>Risk Score:</span>
+              <strong>${(data.risk_score * 100).toFixed(1)}%</strong>
+            </div>
           </div>
-          ${data.pattern_analysis && data.pattern_analysis.matched_patterns && data.pattern_analysis.matched_patterns.length > 0 ? `
-            <div class="report-section">
-              <h3>Detected Patterns</h3>
-              <ul>
-                ${data.pattern_analysis.matched_patterns.map(p => `<li>${this.escapeHtml(p)}</li>`).join('')}
-              </ul>
+  
+          <div class="report-body">
+            ${this.getRecommendationsHTML(data)}
+            
+            <div class="report-footer">
+              ${this.getFooterMessage(riskLevel)} ${this.getFooterEmoji(riskLevel)}
             </div>
-          ` : ''}
-          ${data.similar_texts && data.similar_texts.length > 0 ? `
-            <div class="report-section">
-              <h3>Similar Cases</h3>
-              <ul>
-                ${data.similar_texts.map(case_ => `
-                  <li>
-                    <strong>Similarity: ${(case_.similarity * 100).toFixed(1)}%</strong>
-                    <p>${this.escapeHtml(case_.text.substring(0, 100))}...</p>
-                  </li>
-                `).join('')}
-              </ul>
-            </div>
-          ` : ''}
+          </div>
         `;
   
         const reportContent = document.getElementById('report-content');
@@ -223,10 +259,52 @@ class ScamDetector {
       }
     }
   
-    getRiskLevelText(score) {
-      if (score >= 0.7) return 'Critical Risk 🚨';
-      if (score >= 0.3) return 'Moderate Risk ⚠️';
-      return 'Low Risk ✅';
+    getRecommendationsHTML(data) {
+      if (data.llm_analysis && data.llm_analysis.recommendations && data.llm_analysis.recommendations.length > 0) {
+        let html = '<div class="report-section"><h4>Recommended Actions</h4><ul class="recommendations-list">';
+        data.llm_analysis.recommendations.forEach(action => {
+          html += `<li class="recommendation-item">${this.escapeHtml(action)}</li>`;
+        });
+        html += '</ul></div>';
+        return html;
+      }
+      return '<div class="report-section"><h4>No recommendations provided</h4></div>';
+    }
+  
+    getRiskLevelEmoji(riskLevel) {
+      switch (riskLevel) {
+        case 'critical': return '🚨';
+        case 'high': return '⚠️';
+        case 'medium': return '❗';
+        default: return '✨';
+      }
+    }
+  
+    getRiskLevelText(riskLevel) {
+      switch (riskLevel) {
+        case 'critical': return 'Critical Risk - Melting Alert!';
+        case 'high': return 'High Risk - Handle with Care!';
+        case 'medium': return 'Medium Risk - Stay Alert!';
+        default: return 'Low Risk - Enjoy Safely!';
+      }
+    }
+  
+    getFooterMessage(riskLevel) {
+      switch (riskLevel) {
+        case 'critical': return 'Emergency! Your gelato is melting fast!';
+        case 'high': return 'Careful! This gelato needs attention!';
+        case 'medium': return 'Keep an eye on your gelato!';
+        default: return 'Enjoy your delicious gelato!';
+      }
+    }
+  
+    getFooterEmoji(riskLevel) {
+      switch (riskLevel) {
+        case 'critical': return '🍦💦🔥';
+        case 'high': return '🍦⚠️';
+        case 'medium': return '🍦❗';
+        default: return '🍦✨🎉';
+      }
     }
   
     escapeHtml(text) {
@@ -241,17 +319,13 @@ class ScamDetector {
           this.gelatoIcon.innerHTML = '🍨💧';
           this.gelatoIcon.className = 'gelato-icon';
         }
-  
         const tooltip = document.createElement('div');
         tooltip.className = 'tooltip';
         tooltip.textContent = 'Analysis failed. Please try again.';
-  
         document.body.appendChild(tooltip);
-  
         const rect = this.gelatoIcon.getBoundingClientRect();
         tooltip.style.left = `${rect.left}px`;
         tooltip.style.top = `${rect.bottom + 10}px`;
-  
         setTimeout(() => {
           if (tooltip.parentNode) tooltip.parentNode.removeChild(tooltip);
         }, 3000);
@@ -266,7 +340,6 @@ class ScamDetector {
           element.removeEventListener(event, handler);
         });
         this.eventListeners = [];
-  
         if (this.gelatoIcon && this.gelatoIcon.parentNode) {
           this.gelatoIcon.parentNode.removeChild(this.gelatoIcon);
         }
@@ -287,26 +360,15 @@ class ScamDetector {
     }
   });
   
-  // (Optional) A helper function to extract visible main content can be defined here.
+  // (Optional) Helper function to extract visible main content.
   function getVisibleMainContent() {
-    // Extend text extraction scope.
     const mainContentTags = [
-      'body', // Use body as fallback
-      'article',
-      'main',
-      'div[role="main"]',
-      '.main-content',
-      '#main-content',
-      'p',
-      'section',
-      '.content',
-      '#content'
+      'body', 'article', 'main', 'div[role="main"]',
+      '.main-content', '#main-content', 'p', 'section', '.content', '#content'
     ];
-  
     const viewportHeight = window.innerHeight;
     const texts = [];
     let hasContent = false;
-  
     for (const tag of mainContentTags) {
       const elements = document.querySelectorAll(tag);
       elements.forEach(element => {
@@ -321,11 +383,9 @@ class ScamDetector {
       });
       if (hasContent) break;
     }
-  
     if (!hasContent) {
       return document.body.textContent.trim();
     }
-  
     return texts.join('\n');
   }
   
